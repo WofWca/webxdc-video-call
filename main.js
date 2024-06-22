@@ -358,7 +358,6 @@ function execWhenSourceBufferReady(sourceBuffer, fn, _sequence) {
     fn();
     return;
   }
-  // `sourceBuffer.updating === true` and the queue is empty
 
   if (!queue) {
     queue = [fn];
@@ -366,36 +365,69 @@ function execWhenSourceBufferReady(sourceBuffer, fn, _sequence) {
   } else {
     queue.push(fn);
   }
-  emptyQueue(sourceBuffer, queue)
+
+  /** @type {true} */
+  const _assert1 = sourceBuffer.updating
+  // `sourceBuffer.updating === true` and we just added the first item
+  // to the queue.
+  // Let's initiate the "empty queue" process
+
+  const onSourceBufferReadyAndQueueNotEmpty = () => {
+    if (sourceBuffer.updating) {
+      console.warn(
+        "sourceBuffer.updating === true, but we're supposed to be the only " +
+        "party that can operate on the sourceBuffer. " +
+        "Something else made it busy. " +
+        "We'll graciously wait for the next 'updateend' event"
+      )
+      return
+    }
+
+    // why `do while`? Because if `sourceBuffer.updating` didn't
+    // become `true` after `fn()`,
+    // there will be no subsequent 'updateend' event,
+    // so we'd be waiting for it indefinitely.
+    do {
+      /** @type {true} */
+      const _assert2 = !sourceBuffer.updating
+      const fn = queue.shift();
+      fn();
+
+      if (!sourceBuffer.updating) {
+        console.warn(
+          "Executed `fn()`, but it didn't make " +
+          "`sourceBuffer.updating === true`\n" +
+          "We'll handle it graciously, but usually " +
+          "operations on `sourceBuffer` cause it to become busy."
+        )
+      }
+  
+      // Checking length _after_ `queue.shift()` because, as stated before,
+      // there is at least one item in the queue, and this is the only code
+      // that can reduce the size of the queue.
+      if (queue.length === 0) {
+        sourceBuffer.removeEventListener(
+          'updateend',
+          onSourceBufferReadyAndQueueNotEmpty
+        );
+        return
+      }
+      // The queue is still not empty.
+    } while (!sourceBuffer.updating)
+    // `sourceBuffer.updating === true` and the queue is still not empty.
+    // Let's simply wait for the next 'updateend' event.
+    /** @type {true} */
+    const _assert2 = sourceBuffer.updating
+  }
+
+  sourceBuffer.addEventListener(
+    'updateend',
+    onSourceBufferReadyAndQueueNotEmpty,
+    { passive: true }
+  );
 }
 /** @type {WeakMap<SourceBuffer, Array<() => void>>} */
 const queueMap = new WeakMap();
-/**
- * Assumes the queue is not empty
- * @param {SourceBuffer} sourceBuffer
- * @param {Array<() => void>} queue
- */
-function emptyQueue(sourceBuffer, queue) {
-  console.log('emptyQueue called');
-  
-  sourceBuffer.addEventListener('updateend', () => {
-    console.log('updateend');
-
-    // `fn()` will usually make `sourceBuffer.updating` immediately, so the loop
-    // will execute once.
-    while (!sourceBuffer.updating) {
-      const fn = queue.shift();
-      fn();
-      if (queue.length === 0) {
-        return
-      }
-    }
-    // Now `sourceBuffer.updating === true`, let's attach the listener.
-    /** @type {true} */
-    const _assert = sourceBuffer.updating;
-    emptyQueue(sourceBuffer, queue);
-  }, { once: true, passive: true });
-}
 
 
 /**
