@@ -1,4 +1,4 @@
-# video-call-over-email
+# webxdc-video-call
 
 <!-- Yep, actual video call over actual email. -->
 
